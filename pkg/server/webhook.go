@@ -453,6 +453,26 @@ func createPatch(pod *corev1.Pod, inj *config.InjectionConfig, annotations map[s
 		// this mutates inj.Containers with our environment vars
 		mutatedInjectedContainers := mergeEnvVars(inj.Environment, inj.Containers)
 		mutatedInjectedContainers = mergeVolumeMounts(inj.VolumeMounts, mutatedInjectedContainers)
+		/*
+			If users specify the annotation as "injector.tumblr.com/request:filebrowser", the injector should inject filebrowser/filebrowser into the pods
+			Users use filebrowser to manage the filesystem of pod containers, and the filebrowser sidecar has to see the original volumeMount of pod containers
+			So I add the original volumeMount of pod containers for the filebrowser sidecar
+		*/
+		a, ok := pod.Annotations["injector.tumblr.com/request"]
+		//"injector.tumblr.com/request:filebrowser" and find out if there is a filebrowser sidecar in the configmap
+		if ok && strings.Contains(a, "filebrowser") && strings.Contains(inj.Name, "filebrowser") {
+			for scIndex, sc := range mutatedInjectedContainers {
+				if strings.Contains(sc.Image, "filebrowser") { //a container sidecar whose image is filebrowser
+					mc := &mutatedInjectedContainers[scIndex]
+					for _, c := range pod.Spec.Containers {
+						for _, v := range c.VolumeMounts {
+							v.MountPath = path.Join("/srv", c.Name, v.MountPath)
+							mc.VolumeMounts = append(mc.VolumeMounts, v)
+						}
+					}
+				}
+			}
+		}
 		patch = append(patch, addContainers(pod.Spec.Containers, mutatedInjectedContainers, "/spec/containers")...)
 	}
 
