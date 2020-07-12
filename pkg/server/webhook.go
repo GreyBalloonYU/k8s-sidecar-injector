@@ -469,6 +469,11 @@ func createPatch(pod *corev1.Pod, inj *config.InjectionConfig, annotations map[s
 							v.MountPath = path.Join("/srv", c.Name, v.MountPath)
 							mc.VolumeMounts = append(mc.VolumeMounts, v)
 						}
+						//also add volumemount defined by the sidecar configmap
+						for _, iv := range inj.VolumeMounts {
+							iv.MountPath = path.Join("/srv", c.Name, iv.MountPath)
+							mc.VolumeMounts = append(mc.VolumeMounts, iv)
+						}
 					}
 				}
 			}

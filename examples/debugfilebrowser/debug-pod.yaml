@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debugpod
+  namespace: default
+  labels:
+    app: myApp1
+  annotations:
+    injector.tumblr.com/request: filebrowser
+spec:
+  containers:
+  - name: myapp-busybox1
+    image: registry.cn-hangzhou.aliyuncs.com/google_containers/busybox
+    imagePullPolicy: IfNotPresent
+    command: ['sh', '-c', 'echo The app is running! && sleep 3600']
+    volumeMounts:
+    - mountPath: /data1
+      name: test-volume1
+      subPath: data1
+    - mountPath: /share
+      name: test-volume2
+  - name: myapp-busybox2
+    image: registry.cn-hangzhou.aliyuncs.com/google_containers/busybox
+    imagePullPolicy: IfNotPresent
+    command: ['sh', '-c', 'echo The app is running! && sleep 3600']
+    volumeMounts:
+    - mountPath: /data2
+      name: test-volume1
+      subPath: data2
+    - mountPath: /share
+      name: test-volume2
+  volumes:
+  - name: test-volume1
+    emptyDir: {}
+  - name: test-volume2
+    emptyDir: {}

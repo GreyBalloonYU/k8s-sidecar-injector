@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: debug-deploy
+  labels:
+    app: myApp3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: myApp3
+  template:
+    metadata:
+      labels:
+        app: myApp3
+      annotations:
+        injector.tumblr.com/request: filebrowser
+    spec:
+      containers:
+      - name: myapp-busybox1
+        image: registry.cn-hangzhou.aliyuncs.com/google_containers/busybox
+        imagePullPolicy: IfNotPresent
+        command: ['sh', '-c', 'echo The app is running! && sleep 3600']
+        volumeMounts:
+        - mountPath: /data1
+          name: test-volume
+      - name: myapp-busybox2
+        image: registry.cn-hangzhou.aliyuncs.com/google_containers/busybox
+        imagePullPolicy: IfNotPresent
+        command: ['sh', '-c', 'echo The app is running! && sleep 3600']
+        volumeMounts:
+        - mountPath: /data2
+          name: test-volume
+      volumes:
+      - name: test-volume
+        emptyDir: {}
+
