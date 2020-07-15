@@ -25,6 +25,9 @@ const (
 	StatusInjected = "injected"
 )
 
+//AnnotNamespace shows the annotationNamespace for the sidecar configmap
+var AnnotNamespace string
+
 var (
 	serviceAccountTokenMountPath = "/var/run/secrets/kubernetes.io/serviceaccount"
 	runtimeScheme                = runtime.NewScheme()
@@ -136,12 +139,14 @@ func (whsvr *WebhookServer) requestAnnotationKey() string {
 
 // Check whether the target resoured need to be mutated. returns the canonicalized full name of the injection config
 // if found, or an error if not.
-func (whsvr *WebhookServer) getSidecarConfigurationRequested(ignoredList []string, metadata *metav1.ObjectMeta) (string, error) {
+func (whsvr *WebhookServer) getSidecarConfigurationRequested(ignoredList []string, metadata *metav1.ObjectMeta) ([]string, error) {
+
 	// skip special kubernetes system namespaces
 	for _, namespace := range ignoredList {
 		if metadata.Namespace == namespace {
 			glog.Infof("Pod %s/%s should skip injection due to ignored namespace", metadata.Name, metadata.Namespace)
-			return "", ErrSkipIgnoredNamespace
+			var tmp = []string{""}
+			return tmp, ErrSkipIgnoredNamespace
 		}
 	}
 
@@ -156,23 +161,42 @@ func (whsvr *WebhookServer) getSidecarConfigurationRequested(ignoredList []strin
 	status, ok := annotations[statusAnnotationKey]
 	if ok && strings.ToLower(status) == StatusInjected {
 		glog.Infof("Pod %s/%s annotation %s=%s indicates injection already satisfied, skipping", metadata.Namespace, metadata.Name, statusAnnotationKey, status)
-		return "", ErrSkipAlreadyInjected
+		var tmp = []string{""}
+		return tmp, ErrSkipAlreadyInjected
 	}
 
 	// determine whether to perform mutation based on annotation for the target resource
 	requestedInjection, ok := annotations[requestAnnotationKey]
 	if !ok {
 		glog.Infof("Pod %s/%s annotation %s is missing, skipping injection", metadata.Namespace, metadata.Name, requestAnnotationKey)
-		return "", ErrMissingRequestAnnotation
+		var tmp = []string{""}
+		return tmp, ErrMissingRequestAnnotation
 	}
-	ic, err := whsvr.Config.GetInjectionConfig(requestedInjection)
-	if err != nil {
-		glog.Errorf("Mutation policy for pod %s/%s: %v", metadata.Namespace, metadata.Name, err)
-		return "", ErrRequestedSidecarNotFound
+	/*
+		If users request to inject several sidecars for the pod,
+		can specify the annotation as "injector.tumblr.com/request: xxx;yyy;zzz;....;", xxx/yyy/zzz are different sidecar configs, they will be injected to the pod respectly.
+		We use ";" to split these sidecar configmaps' names specified by the pod.
+	*/
+	requestedInjections := strings.Split(requestedInjection, ";")
+	var ics []*config.InjectionConfig
+	for _, ri := range requestedInjections {
+		ic, err := whsvr.Config.GetInjectionConfig(ri)
+		if err != nil {
+			glog.Errorf("Mutation policy for pod %s/%s: %v", metadata.Namespace, metadata.Name, err)
+			continue
+		}
+		ics = append(ics, ic)
 	}
-
-	glog.Infof("Pod %s/%s annotation %s=%s requesting sidecar config %s", metadata.Namespace, metadata.Name, requestAnnotationKey, requestedInjection, ic.FullName())
-	return ic.FullName(), nil
+	if len(ics) == 0 {
+		var tmp = []string{""}
+		return tmp, ErrRequestedSidecarNotFound
+	}
+	var icfulls []string
+	for _, ic := range ics {
+		glog.Infof("Pod %s/%s annotation %s=%s requesting sidecar config %s", metadata.Namespace, metadata.Name, requestAnnotationKey, requestedInjection, ic.FullName())
+		icfulls = append(icfulls, ic.FullName())
+	}
+	return icfulls, nil
 }
 
 func setEnvironment(target []corev1.Container, addedEnv []corev1.EnvVar, basePath string) (patch []patchOperation) {
@@ -423,56 +447,161 @@ func updateAnnotations(target map[string]string, added map[string]string) (patch
 }
 
 // create mutation patch for resoures
-func createPatch(pod *corev1.Pod, inj *config.InjectionConfig, annotations map[string]string) ([]byte, error) {
+func createPatch(pod *corev1.Pod, injs []*config.InjectionConfig, annotations map[string]string) ([]byte, error) {
 	var patch []patchOperation
 
 	// be sure to inject the serviceAccountName before adding any volumeMounts, because we must prune out any existing
 	// volumeMounts that were added to support the default service account. Because this removal is by index, we splice
 	// them out before appending new volumes at the end.
-	if inj.ServiceAccountName != "" && (pod.Spec.ServiceAccountName == "" || pod.Spec.ServiceAccountName == "default") {
-		// only override the serviceaccount name if not set in the pod spec
-		patch = append(patch, setServiceAccount(pod.Spec.InitContainers, pod.Spec.Containers, inj.ServiceAccountName, "/spec")...)
+	for _, inj := range injs {
+		if inj.ServiceAccountName != "" && (pod.Spec.ServiceAccountName == "" || pod.Spec.ServiceAccountName == "default") {
+			// only override the serviceaccount name if not set in the pod spec
+			patch = append(patch, setServiceAccount(pod.Spec.InitContainers, pod.Spec.Containers, inj.ServiceAccountName, "/spec")...)
+			break
+		}
+	}
+
+	//add several sidecar configs into one, and we should delete duplicates
+	wholeinj := new(config.InjectionConfig)
+	for _, inj := range injs {
+		for _, ic := range inj.Containers {
+			dflag := true
+			for _, wc := range wholeinj.Containers {
+				if ic.Name == wc.Name {
+					dflag = false
+					break
+				}
+			}
+			if dflag {
+				wholeinj.Containers = append(wholeinj.Containers, ic)
+			}
+		}
+		for _, iv := range inj.Volumes {
+			dflag := true
+			for _, wv := range wholeinj.Volumes {
+				if iv.Name == wv.Name {
+					dflag = false
+					break
+				}
+			}
+			if dflag {
+				wholeinj.Volumes = append(wholeinj.Volumes, iv)
+			}
+		}
+		for _, ie := range inj.Environment {
+			dflag := true
+			for _, we := range wholeinj.Environment {
+				if ie.Name == we.Name {
+					dflag = false
+					break
+				}
+			}
+			if dflag {
+				wholeinj.Environment = append(wholeinj.Environment, ie)
+			}
+		}
+		for _, ivm := range inj.VolumeMounts {
+			dflag := true
+			for _, wvm := range wholeinj.VolumeMounts {
+				if ivm.Name == wvm.Name {
+					dflag = false
+					break
+				}
+			}
+			if dflag {
+				wholeinj.VolumeMounts = append(wholeinj.VolumeMounts, ivm)
+			}
+		}
+		for _, ih := range inj.HostAliases {
+			dflag := true
+			for _, wh := range wholeinj.HostAliases {
+				if ih.IP == wh.IP {
+					dflag = false
+					break
+				}
+			}
+			if dflag {
+				wholeinj.HostAliases = append(wholeinj.HostAliases, ih)
+			}
+		}
+		for _, iic := range inj.InitContainers {
+			dflag := true
+			for _, wic := range wholeinj.InitContainers {
+				if iic.Name == wic.Name {
+					dflag = false
+					break
+				}
+			}
+			if dflag {
+				wholeinj.InitContainers = append(wholeinj.InitContainers, iic)
+			}
+		}
 	}
 
 	{ // initcontainer injections
 		// patch all existing InitContainers with the VolumeMounts+EnvVars, and add injected initcontainers
-		patch = append(patch, setEnvironment(pod.Spec.InitContainers, inj.Environment, "/spec/initContainers")...)
-		patch = append(patch, addVolumeMounts(pod.Spec.InitContainers, inj.VolumeMounts, "/spec/initContainers")...)
+		patch = append(patch, setEnvironment(pod.Spec.InitContainers, wholeinj.Environment, "/spec/initContainers")...)
+		patch = append(patch, addVolumeMounts(pod.Spec.InitContainers, wholeinj.VolumeMounts, "/spec/initContainers")...)
 		// next, make sure any injected init containers in our config get the EnvVars and VolumeMounts injected
 		// this mutates inj.InitContainers with our environment vars
-		mutatedInjectedInitContainers := mergeEnvVars(inj.Environment, inj.InitContainers)
-		mutatedInjectedInitContainers = mergeVolumeMounts(inj.VolumeMounts, mutatedInjectedInitContainers)
+		mutatedInjectedInitContainers := mergeEnvVars(wholeinj.Environment, wholeinj.InitContainers)
+		mutatedInjectedInitContainers = mergeVolumeMounts(wholeinj.VolumeMounts, mutatedInjectedInitContainers)
 		patch = append(patch, addContainers(pod.Spec.InitContainers, mutatedInjectedInitContainers, "/spec/initContainers")...)
 	}
 
 	{ // container injections
 		// now, patch all existing containers with the env vars and volume mounts, and add injected containers
-		patch = append(patch, setEnvironment(pod.Spec.Containers, inj.Environment, "/spec/containers")...)
-		patch = append(patch, addVolumeMounts(pod.Spec.Containers, inj.VolumeMounts, "/spec/containers")...)
+		patch = append(patch, setEnvironment(pod.Spec.Containers, wholeinj.Environment, "/spec/containers")...)
+		patch = append(patch, addVolumeMounts(pod.Spec.Containers, wholeinj.VolumeMounts, "/spec/containers")...)
 		// first, make sure any injected containers in our config get the EnvVars and VolumeMounts injected
 		// this mutates inj.Containers with our environment vars
-		mutatedInjectedContainers := mergeEnvVars(inj.Environment, inj.Containers)
-		mutatedInjectedContainers = mergeVolumeMounts(inj.VolumeMounts, mutatedInjectedContainers)
+		mutatedInjectedContainers := mergeEnvVars(wholeinj.Environment, wholeinj.Containers)
+		mutatedInjectedContainers = mergeVolumeMounts(wholeinj.VolumeMounts, mutatedInjectedContainers)
 		/*
 			If users specify the annotation as "injector.tumblr.com/request:filebrowser", the injector should inject filebrowser/filebrowser into the pods
 			Users use filebrowser to manage the filesystem of pod containers, and the filebrowser sidecar has to see the original volumeMount of pod containers
 			So I add the original volumeMount of pod containers for the filebrowser sidecar
 		*/
-		a, ok := pod.Annotations["injector.tumblr.com/request"]
-		//"injector.tumblr.com/request:filebrowser" and find out if there is a filebrowser sidecar in the configmap
-		if ok && strings.Contains(a, "filebrowser") && strings.Contains(inj.Name, "filebrowser") {
+		a, ok := pod.Annotations[AnnotNamespace+"/request"]
+		annotations := strings.Split(a, ";")
+		//find out if there is a filebrowser sidecar in the configmap
+		flag := false
+		if ok {
+			for _, tmpa := range annotations {
+				if strings.Contains(tmpa, "filebrowser") {
+					for _, inj := range injs {
+						if strings.Contains(inj.Name, "filebrowser") {
+							flag = true
+							break
+						}
+					}
+					break
+				}
+			}
+		}
+		if flag {
 			for scIndex, sc := range mutatedInjectedContainers {
 				if strings.Contains(sc.Image, "filebrowser") { //a container sidecar whose image is filebrowser
 					mc := &mutatedInjectedContainers[scIndex]
+					// for containers defined by the original pod
 					for _, c := range pod.Spec.Containers {
 						for _, v := range c.VolumeMounts {
 							v.MountPath = path.Join("/srv", c.Name, v.MountPath)
 							mc.VolumeMounts = append(mc.VolumeMounts, v)
 						}
 						//also add volumemount defined by the sidecar configmap
-						for _, iv := range inj.VolumeMounts {
+						for _, iv := range wholeinj.VolumeMounts {
 							iv.MountPath = path.Join("/srv", c.Name, iv.MountPath)
 							mc.VolumeMounts = append(mc.VolumeMounts, iv)
+						}
+					}
+					// for sidecar containers except the filebrowser
+					for _, c := range mutatedInjectedContainers {
+						if !strings.Contains(c.Image, "filebrowser") {
+							for _, v := range c.VolumeMounts {
+								v.MountPath = path.Join("/srv", c.Name, v.MountPath)
+								mc.VolumeMounts = append(mc.VolumeMounts, v)
+							}
 						}
 					}
 				}
@@ -483,8 +612,8 @@ func createPatch(pod *corev1.Pod, inj *config.InjectionConfig, annotations map[s
 
 	{ // pod level mutations
 		// now, add hostAliases and volumes
-		patch = append(patch, addHostAliases(pod.Spec.HostAliases, inj.HostAliases, "/spec/hostAliases")...)
-		patch = append(patch, addVolumes(pod.Spec.Volumes, inj.Volumes, "/spec/volumes")...)
+		patch = append(patch, addHostAliases(pod.Spec.HostAliases, wholeinj.HostAliases, "/spec/hostAliases")...)
+		patch = append(patch, addVolumes(pod.Spec.Volumes, wholeinj.Volumes, "/spec/volumes")...)
 	}
 
 	// last but not least, set annotations
@@ -509,33 +638,43 @@ func (whsvr *WebhookServer) mutate(req *v1beta1.AdmissionRequest) *v1beta1.Admis
 		req.Kind, req.Namespace, req.Name, pod.Name, req.UID, req.Operation, req.UserInfo)
 
 	// determine whether to perform mutation
-	injectionKey, err := whsvr.getSidecarConfigurationRequested(ignoredNamespaces, &pod.ObjectMeta)
+	injectionKeys, err := whsvr.getSidecarConfigurationRequested(ignoredNamespaces, &pod.ObjectMeta)
 	if err != nil {
 		glog.Infof("Skipping mutation of %s/%s: %v", pod.Namespace, pod.Name, err)
 		reason := GetErrorReason(err)
-		injectionCounter.With(prometheus.Labels{"status": "skipped", "reason": reason, "requested": injectionKey}).Inc()
+		injectionCounter.With(prometheus.Labels{"status": "skipped", "reason": reason, "requested": ""}).Inc()
 		return &v1beta1.AdmissionResponse{
 			Allowed: true,
 		}
 	}
 
-	injectionConfig, err := whsvr.Config.GetInjectionConfig(injectionKey)
-	if err != nil {
-		glog.Errorf("Error getting injection config %s, permitting launch of pod with no sidecar injected: %s", injectionConfig, err.Error())
-		// dont prevent pods from launching! just return allowed
-		injectionCounter.With(prometheus.Labels{"status": "skipped", "reason": "missing_config", "requested": injectionKey}).Inc()
+	var injectionConfigs []*config.InjectionConfig
+	for _, ik := range injectionKeys {
+		injectionConfig, err := whsvr.Config.GetInjectionConfig(ik)
+		if err != nil {
+			glog.Errorf("Error getting injection config %s, permitting launch of pod with no sidecar injected: %s", injectionConfig, err.Error())
+			// dont prevent pods from launching! just return allowed
+			injectionCounter.With(prometheus.Labels{"status": "skipped", "reason": "missing_config", "requested": ik}).Inc()
+			continue
+		}
+		injectionConfigs = append(injectionConfigs, injectionConfig)
+	}
+	if len(injectionConfigs) == 0 {
 		return &v1beta1.AdmissionResponse{
 			Allowed: true,
 		}
 	}
 
 	// Workaround: https://github.com/kubernetes/kubernetes/issues/57982
-	applyDefaultsWorkaround(injectionConfig.Containers, injectionConfig.Volumes)
+	for i := 0; i < len(injectionConfigs); i++ {
+		applyDefaultsWorkaround(injectionConfigs[i].Containers, injectionConfigs[i].Volumes)
+	}
 	annotations := map[string]string{}
 	annotations[whsvr.statusAnnotationKey()] = StatusInjected
-	patchBytes, err := createPatch(&pod, injectionConfig, annotations)
+	patchBytes, err := createPatch(&pod, injectionConfigs, annotations)
+	wholekeys := strings.Join(injectionKeys, ";")
 	if err != nil {
-		injectionCounter.With(prometheus.Labels{"status": "error", "reason": "patching_error", "requested": injectionKey}).Inc()
+		injectionCounter.With(prometheus.Labels{"status": "error", "reason": "patching_error", "requested": wholekeys}).Inc()
 		return &v1beta1.AdmissionResponse{
 			Result: &metav1.Status{
 				Message: err.Error(),
@@ -544,7 +683,7 @@ func (whsvr *WebhookServer) mutate(req *v1beta1.AdmissionRequest) *v1beta1.Admis
 	}
 
 	glog.Infof("AdmissionResponse: patch=%v\n", string(patchBytes))
-	injectionCounter.With(prometheus.Labels{"status": "success", "reason": "all_groovy", "requested": injectionKey}).Inc()
+	injectionCounter.With(prometheus.Labels{"status": "success", "reason": "all_groovy", "requested": wholekeys}).Inc()
 	return &v1beta1.AdmissionResponse{
 		Allowed: true,
 		Patch:   patchBytes,

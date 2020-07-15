@@ -6,7 +6,7 @@ metadata:
   labels:
     app: myApp1
   annotations:
-    injector.tumblr.com/request: filebrowser
+    injector.tumblr.com/request: "filebrowser;another;fasdfdsd"
 spec:
   containers:
   - name: myapp-busybox1
@@ -19,6 +19,11 @@ spec:
       subPath: data1
     - mountPath: /share
       name: test-volume2
+    env:
+    - name: HELLO
+      value: "world"
+      name: GOOD
+      value: "bye"
   - name: myapp-busybox2
     image: registry.cn-hangzhou.aliyuncs.com/google_containers/busybox
     imagePullPolicy: IfNotPresent

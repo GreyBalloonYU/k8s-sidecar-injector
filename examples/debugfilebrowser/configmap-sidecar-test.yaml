@@ -21,4 +21,35 @@ data:
       emptyDir: {}
     volumeMounts:
     - mountPath: /wholeshare
-      name: whole-volume  
+      name: whole-volume
+    env:
+    - name: HELLO
+      value: "world"
+    - name: HEY
+      value: "hey"
+  another: |
+    name: another
+    containers:
+    - name: sidecar-another
+      image: registry.cn-hangzhou.aliyuncs.com/google_containers/busybox
+      imagePullPolicy: IfNotPresent
+      command: ['sh', '-c', 'echo The app is running! && sleep 3600']
+      volumeMounts:
+      - mountPath: /anotherwhole
+        name: whole-volume2
+    - name: sidecar-another
+      image: registry.cn-hangzhou.aliyuncs.com/google_containers/busybox
+      imagePullPolicy: IfNotPresent
+    volumes:
+    - name: whole-volume
+      emptyDir: {}
+    - name: whole-volume2
+      emptyDir: {}
+    volumeMounts:
+    - mountPath: /wholeshare
+      name: whole-volume
+    env:
+    - name: HELLO
+      value: "world"
+    - name: HEY2
+      value: "hey2"
