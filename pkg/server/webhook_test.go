@@ -119,8 +119,8 @@ func TestLoadConfig(t *testing.T) {
 		if err != test.expectedError {
 			t.Fatalf("%s: (expectedSidecar %s) error: %v did not match %v (k %v)", test.configuration, test.expectedSidecar, err, test.expectedError, key)
 		}
-		if key[0] != test.expectedSidecar {
-			t.Fatalf("%s: expected sidecar to be %v but was %v instead", test.configuration, test.expectedSidecar, key[0])
+		if key != test.expectedSidecar {
+			t.Fatalf("%s: expected sidecar to be %v but was %v instead", test.configuration, test.expectedSidecar, key)
 		}
 
 	}

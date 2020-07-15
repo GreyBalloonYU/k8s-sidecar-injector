@@ -80,7 +80,6 @@ func main() {
 	}
 	if parameters.AnnotationNamespace != "" {
 		cfg.AnnotationNamespace = parameters.AnnotationNamespace
-		server.AnnotNamespace = parameters.AnnotationNamespace
 	}
 
 	// wire this up to cancel the context when we get shutdown signal
