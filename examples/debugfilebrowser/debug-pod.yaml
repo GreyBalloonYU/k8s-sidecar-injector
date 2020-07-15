@@ -6,7 +6,7 @@ metadata:
   labels:
     app: myApp1
   annotations:
-    injector.tumblr.com/request: "filebrowser;another;fasdfdsd"
+    injector.tumblr.com/request: filebrowser;another;fasdfdsd
 spec:
   containers:
   - name: myapp-busybox1
