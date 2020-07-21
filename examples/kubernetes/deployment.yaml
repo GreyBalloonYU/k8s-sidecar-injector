@@ -27,7 +27,7 @@ spec:
       containers:
       - name: "k8s-sidecar-injector"
         imagePullPolicy: Always
-        image: tumblr/k8s-sidecar-injector:latest
+        image: registry.cn-beijing.aliyuncs.com/greyballoon/sidecar-injector:latest  #tumblr/k8s-sidecar-injector:latest
         command: ["entrypoint.sh"]
         args: []
         ports:

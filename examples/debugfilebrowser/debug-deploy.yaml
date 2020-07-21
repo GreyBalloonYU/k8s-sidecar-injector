@@ -14,7 +14,7 @@ spec:
       labels:
         app: myApp3
       annotations:
-        injector.tumblr.com/request: filebrowser
+        injector.ebupt.com/request: filebrowser
     spec:
       containers:
       - name: myapp-busybox1

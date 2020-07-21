@@ -1,12 +1,12 @@
 apiVersion: admissionregistration.k8s.io/v1beta1
 kind: MutatingWebhookConfiguration
 metadata:
-  name: "tumblr-sidecar-injector-webhook"
+  name: "ebupt-sidecar-injector-webhook"
   labels:
     app: k8s-sidecar-injector
     track: prod
 webhooks:
-- name: "injector.tumblr.com"
+- name: "injector.ebupt.com"
   failurePolicy: "Ignore" # we fail "open" if the webhook is down hard
   rules:
   - operations: [ "CREATE" ]
