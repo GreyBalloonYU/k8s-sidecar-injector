@@ -9,6 +9,8 @@ CONFIGMAP_LABELS="${CONFIGMAP_LABELS:-app=k8s-sidecar-injector}"
 CONFIGMAP_NAMESPACE="${CONFIGMAP_NAMESPACE:-}"
 ANNOTATION_NAMESPACE="${ANNOTATION_NAMESPACE:-injector.ebupt.com}"
 LOG_LEVEL="${LOG_LEVEL:-2}"
+MASTER_URL="${MASTER_URL:-}"
+KUBECONFIG="${KUBECONFIG:-}"
 echo "k8s-sidecar-injector starting at $(date) with TLS_PORT=${TLS_PORT} CONFIG_DIR=${CONFIG_DIR} TLS_CERT_FILE=${TLS_CERT_FILE} TLS_KEY_FILE=${TLS_KEY_FILE}"
 set -x
 exec k8s-sidecar-injector \
@@ -21,4 +23,6 @@ exec k8s-sidecar-injector \
   --configmap-labels="${CONFIGMAP_LABELS}" \
   --configmap-namespace="${CONFIGMAP_NAMESPACE}" \
   --annotation-namespace="${ANNOTATION_NAMESPACE}" \
+  --master-url="${MASTER_URL}" \
+  --kubeconfig="${KUBECONFIG}" \
   "$@"
