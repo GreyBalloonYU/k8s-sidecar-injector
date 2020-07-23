@@ -1,6 +1,8 @@
 ARG GO_VERSION=1.11.5
 FROM golang:${GO_VERSION}-alpine
 
+ENV GO111MODULE=on \
+    GOPROXY=https://goproxy.cn
 RUN apk --no-cache add \
   ca-certificates \
   make \
